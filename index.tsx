@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useRef, useEffect, useDeferredValue, useCallback, Component, ErrorInfo } from "react";
 import { createRoot } from "react-dom/client";
 // Added ArrowUpDown to the imports from lucide-react
-import { Upload, MessageSquare, Search, Menu, X, ChevronLeft, Calendar, User, Bot, Filter, Download, Copy, Check, ArrowUp, ArrowDown, ArrowUpDown, AlertTriangle, ChevronUp, ChevronDown, Shield, Edit2, CheckSquare, Square, FileText, Activity, Info, Zap, Terminal, Hash, ExternalLink, Cpu, Box, ListRestart, SortAsc, SortDesc, Clock, ListOrdered, Type } from "lucide-react";
+import { Upload, MessageSquare, Search, Menu, X, ChevronLeft, Calendar, User, Bot, Download, Copy, Check, ArrowUpDown, AlertTriangle, ChevronUp, ChevronDown, Shield, Edit2, CheckSquare, Square, FileText, Zap, Terminal, Hash, ExternalLink, Cpu, ListRestart, Clock, ListOrdered, Type } from "lucide-react";
 
 // --- Error Boundary ---
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean; error: Error | null }> {
@@ -43,7 +43,17 @@ class ErrorBoundary extends Component<{ children: React.ReactNode }, { hasError:
 }
 
 // --- Custom Virtual List ---
-const VirtualList = ({ itemCount, itemSize, height, width, children, itemData }: any) => {
+
+interface VirtualListProps {
+  itemCount: number;
+  itemSize: number;
+  height: number;
+  width: string | number;
+  children: React.ComponentType<any>;
+  itemData: any;
+}
+
+const VirtualList = ({ itemCount, itemSize, height, width, children, itemData }: VirtualListProps) => {
   const [scrollTop, setScrollTop] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
   
@@ -51,11 +61,9 @@ const VirtualList = ({ itemCount, itemSize, height, width, children, itemData }:
   const startIndex = Math.floor(scrollTop / itemSize);
   const endIndex = Math.min(
     itemCount - 1,
-    floor((scrollTop + height) / itemSize) + 5
+    Math.floor((scrollTop + height) / itemSize) + 5
   );
 
-  function floor(n: number) { return Math.floor(n); }
-  
   const visibleItems = [];
   if (itemCount > 0) {
       for (let i = startIndex; i <= endIndex; i++) {
@@ -162,18 +170,24 @@ const escapeRegExp = (string: string) => {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 };
 
-const countMatchesInString = (text: string, term: string) => {
-  if (!term || !text) return 0;
-  const re = new RegExp(escapeRegExp(term), 'gi');
-  const matches = text.match(re);
+const countMatchesInString = (text: string, regex: RegExp | null) => {
+  if (!regex || !text) return 0;
+  const matches = text.match(regex);
   return matches ? matches.length : 0;
 };
 
 const getLinearMessages = (conversation: Conversation): Message[] => {
   const messages: Message[] = [];
   let currentNodeId: string | null = conversation.current_node;
+  const seen = new Set<string>();
 
   while (currentNodeId) {
+    if (seen.has(currentNodeId)) {
+        console.warn("Cycle detected in conversation mapping:", currentNodeId);
+        break;
+    }
+    seen.add(currentNodeId);
+
     const node = conversation.mapping[currentNodeId];
     if (!node) break;
 
@@ -419,9 +433,10 @@ const ResearchPanel: React.FC<{ conversation: Conversation; messages: Message[] 
   );
 };
 
-const HighlightedText: React.FC<{ text: string; term: string; startIndex: number; activeIndex: number }> = ({ text, term, startIndex, activeIndex }) => {
-  if (!term || !text) return <>{text}</>;
-  const parts = text.split(new RegExp(`(${escapeRegExp(term)})`, 'gi'));
+const HighlightedText: React.FC<{ text: string; term: string; regex: RegExp | null; startIndex: number; activeIndex: number }> = ({ text, term, regex, startIndex, activeIndex }) => {
+  if (!term || !text || !regex) return <>{text}</>;
+
+  const parts = useMemo(() => text.split(new RegExp(`(${escapeRegExp(term)})`, 'gi')), [text, term]);
   let matchCounter = 0;
   return (
     <>
@@ -449,9 +464,10 @@ const HighlightedText: React.FC<{ text: string; term: string; startIndex: number
 const MessageBubble: React.FC<{ 
   message: Message, 
   highlightTerm: string, 
+  highlightRegex: RegExp | null,
   matchStartIndex: number, 
   activeMatchIndex: number 
-}> = ({ message, highlightTerm, matchStartIndex, activeMatchIndex }) => {
+}> = ({ message, highlightTerm, highlightRegex, matchStartIndex, activeMatchIndex }) => {
   const isUser = message.author.role === "user";
   const text = message.content?.parts?.join("\n") || "";
   const parts = text.split(/```/);
@@ -467,19 +483,19 @@ const MessageBubble: React.FC<{
            <div className={`px-4 py-3 rounded-2xl text-sm md:text-base shadow-sm overflow-hidden transition-colors ${isUser ? "bg-blue-600 text-white rounded-tr-sm" : "bg-gray-800 text-gray-100 border border-gray-700 rounded-tl-sm"}`}>
              <div className="prose prose-invert max-w-none break-words leading-relaxed whitespace-pre-wrap">
                {parts.map((part, i) => {
-                 const matchesInPart = countMatchesInString(part, highlightTerm);
+                 const matchesInPart = countMatchesInString(part, highlightRegex);
                  const currentStartIndex = matchStartIndex + localMatchCount;
                  localMatchCount += matchesInPart;
                  if (i % 2 === 1) {
                    return (
                      <pre key={i} className="my-2 bg-black/30 p-3 rounded text-xs font-mono overflow-x-auto border border-white/10">
                        <code>
-                         <HighlightedText text={part.trim()} term={highlightTerm} startIndex={currentStartIndex} activeIndex={activeMatchIndex} />
+                         <HighlightedText text={part.trim()} term={highlightTerm} regex={highlightRegex} startIndex={currentStartIndex} activeIndex={activeMatchIndex} />
                        </code>
                      </pre>
                    );
                  } else {
-                   return <span key={i}><HighlightedText text={part} term={highlightTerm} startIndex={currentStartIndex} activeIndex={activeMatchIndex} /></span>;
+                   return <span key={i}><HighlightedText text={part} term={highlightTerm} regex={highlightRegex} startIndex={currentStartIndex} activeIndex={activeMatchIndex} /></span>;
                  }
                })}
              </div>
@@ -540,7 +556,14 @@ const FileUploader = ({ onDataLoaded }: { onDataLoaded: (data: Conversation[]) =
 };
 
 // Row component for VirtualList
-const ConversationRow = React.memo(({ index, style, data }: any) => {
+
+interface ConversationRowProps {
+  index: number;
+  style: React.CSSProperties;
+  data: any;
+}
+
+const ConversationRow = React.memo(({ index, style, data }: ConversationRowProps) => {
   const { items, selectedId, onSelect, searchTerm, searchContent, isEditMode, selectedForAction, toggleActionSelection } = data;
   const c = items[index];
   
@@ -674,18 +697,23 @@ const App = () => {
   const selectedConversation = useMemo(() => conversations?.find(c => c.conversation_id === selectedId), [conversations, selectedId]);
   const messages = useMemo(() => selectedConversation ? getLinearMessages(selectedConversation) : [], [selectedConversation]);
 
+  const searchRegex = useMemo(() => {
+    if (!deferredInMessageSearchTerm) return null;
+    return new RegExp(escapeRegExp(deferredInMessageSearchTerm), 'gi');
+  }, [deferredInMessageSearchTerm]);
+
   const messageMatchData = useMemo(() => {
-    if (!deferredInMessageSearchTerm) return { totalMatches: 0, matchOffsets: [] };
+    if (!deferredInMessageSearchTerm || !searchRegex) return { totalMatches: 0, matchOffsets: [] };
     let totalMatches = 0;
     const matchOffsets: number[] = [];
     messages.forEach(msg => {
       matchOffsets.push(totalMatches);
       const text = msg.content?.parts?.join("\n") || "";
       const parts = text.split(/```/);
-      parts.forEach(part => totalMatches += countMatchesInString(part, deferredInMessageSearchTerm));
+      parts.forEach(part => totalMatches += countMatchesInString(part, searchRegex));
     });
     return { totalMatches, matchOffsets };
-  }, [messages, deferredInMessageSearchTerm]);
+  }, [messages, deferredInMessageSearchTerm, searchRegex]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = 0; }, [selectedId]);
@@ -983,7 +1011,7 @@ const App = () => {
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth custom-scrollbar" ref={scrollRef}>
                   <div className="max-w-3xl mx-auto">
-                     {messages.length === 0 ? <div className="text-center text-gray-500 mt-20">No messages.</div> : messages.map((msg, idx) => (<MessageBubble key={msg.id} message={msg} highlightTerm={deferredInMessageSearchTerm} matchStartIndex={messageMatchData.matchOffsets[idx]} activeMatchIndex={currentMatchIndex} />))}
+                     {messages.length === 0 ? <div className="text-center text-gray-500 mt-20">No messages.</div> : messages.map((msg, idx) => (<MessageBubble key={msg.id} message={msg} highlightTerm={deferredInMessageSearchTerm} highlightRegex={searchRegex} matchStartIndex={messageMatchData.matchOffsets[idx]} activeMatchIndex={currentMatchIndex} />))}
                      <div className="h-10"></div>
                   </div>
                 </div>
